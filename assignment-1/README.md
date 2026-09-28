@@ -1,65 +1,59 @@
 # Assignment 1: Airbnb SQL Query Optimization
 
-This coursework investigates how to make multi-table Airbnb queries faster as the volume of listings and reviews grows. It combines SQL query design, execution-plan inspection, and indexing experiments in PostgreSQL, followed by a limited comparison with Databricks.
+This assignment explores indexing for queries that combine several Airbnb tables. We wrote the queries, inspected PostgreSQL execution plans, and compared runtimes at three dataset sizes. We also ran one of the group queries in Databricks.
 
-The strongest reported result is a reduction from **5.717 seconds to 1.365 seconds (approximately 4.19x faster)** for a complaint-related query on the large dataset. These are measurements recorded in the submitted report; the experiments have not been rerun for this publication.
+## Queries and results
 
-## Problems, methods, and observed results
+| Query | Main SQL features | Reported runtime before → after indexing |
+|---|---|---:|
+| Count Sydney superhost listings priced above 100 with 2024–2025 reviews containing `complaint`, grouped by neighbourhood | Five-table join, filtering, aggregation, composite indexes | **5.717 → 1.365 s** (large dataset) |
+| Count popular listings with an `Ocean view` amenity in each city | CTEs, `PERCENT_RANK()`, array containment, GIN index | **1.248 → 1.049 s** (large dataset) |
+| Find Melbourne's five most-reviewed listings over the preceding 365 days | Joins, `COUNT`, `MAX`, index on `(listing_id, review_date)` | **354 → 172 ms** (medium dataset) |
+| Rank hosts with a 100% acceptance rate by their private-room listings that have reviews | Joins, `COUNT(DISTINCT ...)`, index on `acceptance_rate` | **364 → 318 ms** (medium dataset) |
 
-| Problem | Method used in the submission | Reported outcome |
-| --- | --- | --- |
-| Search across five tables for Sydney superhost listings priced above 100, with reviews dated 2024–2025 that contain `complaint`, then summarize matching listings by neighbourhood. | Joins, grouped aggregates, and composite indexes on listings and reviews; inspect which conditions are used by the execution plan. | Large dataset: **5.717 s → 1.365 s**, approximately **4.19x faster**. See [report, pp. 4–7](report.pdf#page=4). |
-| Count popular listings with an `Ocean view` amenity in each city, while ranking popularity within the city. | Two CTEs, `PERCENT_RANK()` over review counts, the array containment operator `@>`, and a GIN index on `amenities`. | Large dataset: **1.248 s → 1.049 s**. See [report, pp. 7–10](report.pdf#page=7). |
-| Retrieve Melbourne's five most-reviewed listings in the preceding 365 days. | Joins, `COUNT`, `MAX`, and a composite index on `(listing_id, review_date)`. | Medium dataset: **354 ms → 172 ms**. See [report, pp. 1–2](report.pdf#page=1). |
-| Rank hosts with 100% acceptance rates by their qualifying private-room listings that have reviews. | Joins, `COUNT(DISTINCT ...)`, and an index on `acceptance_rate`. | Medium dataset: **364 ms → 318 ms**. See [report, pp. 3–4](report.pdf#page=3). |
+The [report](report.pdf) contains the execution plans and timing comparisons. It also shows box plots described as ten runs with and without indexes for each group query; the underlying run-by-run data and plotting scripts are not included.
 
-The main engineering difficulty was identifying useful indexes for queries that mix joins, selective filters, aggregation, and array membership. The report compares small, medium, and large tables, examines query plans, and includes box plots described as ten runs with and ten runs without indexes for each group query. The underlying run-by-run measurements and plotting code were not included in the submitted archive.
+The large complaint-related query took **26.91 s in Databricks**, compared with **5.717 s in PostgreSQL** in the recorded comparison ([pp. 10–11](report.pdf#page=10)). The two environments were not documented closely enough to treat this as a general comparison of the platforms.
 
-The Databricks experiment runs the same large-dataset complaint query and records **26.91 s**, compared with **5.717 s** in PostgreSQL ([report, pp. 10–11](report.pdf#page=10)). This documents one coursework setup. Hardware, cluster configuration, cache state, and repeated cross-platform measurements are not sufficiently documented to support a general claim about which platform is faster.
+## Data and interpretation
 
-## Data and query scope
-
-The queries use `Cities`, `Neighbourhoods`, `Hosts`, `Listings`, and `Reviews`. The Databricks notebook template lists these expected table sizes:
+The queries use `Cities`, `Neighbourhoods`, `Hosts`, `Listings`, and `Reviews`. The course template specifies:
 
 | Table | Small | Medium | Large |
-| --- | ---: | ---: | ---: |
+|---|---:|---:|---:|
 | Listings | 10,500 | 54,000 | 108,182 |
 | Reviews | 400,000 | 2,000,000 | 4,000,676 |
 
-The shared tables are expected to contain 12 cities, 551 neighbourhoods, and 61,153 hosts. These counts come from the submission's template; the dataset is not included here and the counts have not been independently revalidated.
+The shared tables contain 12 cities, 551 neighbourhoods, and 61,153 hosts according to the same template. The original data is not included.
 
-For the popularity query, ranking is calculated among listings that have reviews, using `PERCENT_RANK() <= 0.2`; ties can affect the number selected. The complaint query counts reviews containing a substring, rather than using a sentiment classifier or verifying that every matched review is an actual complaint.
+Two query definitions affect the interpretation of the results:
+
+- `LIKE '%complaint%'` counts a substring match. It is not a classification of whether a review expresses a complaint.
+- The popularity query applies `PERCENT_RANK() <= 0.2` within each city, among listings with reviews. Ties can change the proportion selected.
 
 ## Files
 
-- [`sql/postgres.sql`](sql/postgres.sql): the two individual queries and three group tasks, including indexing experiments for different dataset sizes.
-- [`sql/databricks.sql`](sql/databricks.sql): an exported Databricks SQL notebook containing CSV table definitions and the cross-platform comparison experiment.
-- [`report.pdf`](report.pdf): the submitted report with results, execution-plan screenshots, charts, and the contribution statement; student identifiers are removed in the public copy.
+- [`sql/postgres.sql`](sql/postgres.sql): individual and group queries, with indexing variants for different dataset sizes.
+- [`sql/databricks.sql`](sql/databricks.sql): exported SQL notebook with table setup and the platform comparison.
+- [`report.pdf`](report.pdf): results, query plans, charts, and team contributions. Student identifiers are redacted and the other contributor is listed as Member A.
 
-The SQL files preserve the submitted query logic. The other contributor is consistently identified as Member A; contribution attribution is retained, and student identifiers have been removed from comments.
+## Running the experiments
 
-## Running or extending the experiments
+1. Obtain the course CSV files and setup materials separately. The repository does not include the PostgreSQL schema/bootstrap script or the Databricks Bootstrap notebook.
+2. For PostgreSQL, create the `airbnb` schema with the expected tables and types, including `amenities` as a text array. Run selected query sections: index names are reused, so reset the relevant indexes before each comparison.
+3. For Databricks, prepare the CSV files under `/FileStore/tables/` and review the table-creation cells. They use `DROP TABLE IF EXISTS`; run them in a dedicated project environment.
+4. Record the runtime, hardware, cache state, and timing method for new measurements. The Melbourne query uses `CURRENT_DATE`, so its 365-day window also depends on the run date.
 
-These files are historical experiment scripts, with multiple variants intended to be run as selected sections. They are not a complete one-command setup.
+### Notes on the submitted code and report
 
-1. **Provide the original coursework dataset and environment.** No CSV data, PostgreSQL schema/bootstrap script, or Databricks Bootstrap notebook is included in this submission.
-2. **For PostgreSQL, prepare the `airbnb` schema and the referenced tables.** The queries expect the original column names, relationships, and data types, including `amenities` as a text array. An account that can create and drop the experiment indexes is needed for the indexing sections.
-3. **For Databricks, provide the missing Bootstrap setup and CSV files.** The exported notebook expects files under `/FileStore/tables/airbnb_*.csv` and defines CSV-backed tables. Its setup cells contain `DROP TABLE IF EXISTS`, so use a dedicated coursework environment and review the cells before execution.
-4. **Run selected query variants with explicit index state.** Index names such as `idx_reviews` and `idx_listings` are reused. Executing the PostgreSQL file straight through can leave indexes from earlier tasks in place for sections labeled “No Index.” Record or reset the relevant experiment indexes before comparing timings.
-5. **Record the date and benchmark conditions.** The Melbourne query uses `CURRENT_DATE - INTERVAL '365 days'`, so its results change with the execution date. Document the reference date, database/runtime versions, hardware, warm-up, cache conditions, and timing method before presenting new measurements.
+- The complaint-query plan uses the listing ID and review-date index conditions. The substring search remains a filter; `md5(comments)` does not account for faster substring matching.
+- In the popularity-query plan, the city-name index scan does not establish an indexed lookup on the city ID. The ID condition appears as a join filter.
+- The final Databricks `CREATE INDEX` experiment failed in the original environment. Its statements target the small tables, while the following query uses the large tables; skip this cell when setting up the analysis.
 
-### Limitations preserved from the submission
+## Contributions
 
-- The Databricks script retains the final `CREATE INDEX` experiment that the report describes as failing. Those statements target the small tables, while the following query uses the large tables. Treat that cell as historical evidence, not a successful setup step.
-- In the complaint-query plan shown on report page 6, the indexed conditions are the listing identifier and review dates; `LOWER(comments) LIKE '%complaint%'` remains a filter. The speedup should not be attributed to `md5(comments)` accelerating substring matching.
-- The city-name index scan shown on report page 9 does not establish that the city ID join is resolved by an indexed ID lookup: that condition is displayed as a join filter. The report's explanation should be read with the displayed plan.
-- The report provides evidence of improvements in its recorded runs, but raw benchmark logs and a fully specified benchmark environment are absent.
+**Yuanfeng Liu:** Individual Question 2, the host-ranking query.
 
-## Authors and contribution evidence
+**Member A:** Individual Question 1, the Melbourne review query.
 
-**DATA3404, Semester 1 2025 — TUT07, Assignment Group 06**
-
-- **Member A:** Individual Question 1; named as a major contributor in the report's contribution statement.
-- **Yuanfeng Liu:** Individual Question 2; named as a major contributor in the report's contribution statement.
-
-The individual-query attribution appears in the SQL comments and on report pages 1 and 3. The [contribution statement on page 11](report.pdf#page=11) records the assignments above. Group Tasks 1–3 are presented as the group submission; the report does not provide a finer-grained allocation for those tasks.
+Group Tasks 1–3 were completed as a team. See the [contribution statement on page 11](report.pdf#page=11). This was a DATA3404 submission by TUT07, Assignment Group 06, in Semester 1, 2025.
